@@ -115,22 +115,36 @@ ChatterCore is built with several key components:
 
 ## Development
 
+This project uses [uv](https://github.com/astral-sh/uv) for fast, reliable dependency management.
+
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/chattercore.git
 cd chattercore
 
-# Install in development mode
-pip install -e .[dev]
+# Install dependencies using uv
+uv sync
+
+# Or install in development mode
+uv pip install -e ".[dev]"
 
 # Run tests
-pytest
+uv run pytest
 
 # Format code
-black chattercore/
+uv run black chattercore/
 
 # Type checking
-mypy chattercore/
+uv run mypy chattercore/
+```
+
+### Using traditional pip
+
+If you prefer using pip:
+
+```bash
+pip install -e .[dev]
+pytest
 ```
 
 ## License

@@ -89,6 +89,9 @@ Pipfile.lock
 # poetry
 poetry.lock
 
+# uv.lock should be committed for reproducible builds
+# Do NOT add uv.lock to .gitignore
+
 # PEP 582
 __pypackages__/
 
