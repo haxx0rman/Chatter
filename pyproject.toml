@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools-scm[toml]>=6.2"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "chattercore"
@@ -17,16 +17,16 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Communications",
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 keywords = ["websocket", "realtime", "communication", "messaging", "asyncio"]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "websockets>=11.0.0",
     "pydantic>=2.0.0",
@@ -52,9 +52,8 @@ Homepage = "https://github.com/yourusername/chattercore"
 Repository = "https://github.com/yourusername/chattercore.git"
 Issues = "https://github.com/yourusername/chattercore/issues"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["chattercore*"]
+[tool.hatch.build.targets.wheel]
+packages = ["chattercore"]
 
 [tool.black]
 line-length = 88
