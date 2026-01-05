@@ -5,10 +5,14 @@ This module provides the main server implementation for the ChatterCore system.
 """
 
 import asyncio
+import json
 import logging
-from typing import Dict, Any, Optional, Callable
+import uuid
+import fnmatch
+from typing import Dict, Any, Optional, Callable, Union, Type
 import websockets
 from websockets import ConnectionClosed
+from pydantic import BaseModel, ValidationError
 
 from .connection_manager import ConnectionManager
 from .event_manager import EventManager, EventType
@@ -58,6 +62,26 @@ class ChatterServer:
         self._auth_handler: Optional[Callable] = None
         self._connection_middleware: list = []
         self._message_middleware: list = []
+        
+        # Phase 3: Schema validation
+        self._schemas: Dict[str, Type[BaseModel]] = {}
+        self._strict_validation = False
+        
+        # Phase 3: Logging and tracing
+        self._tracing_enabled = False
+        
+        # Phase 3: Metrics and monitoring
+        self._metrics_enabled = False
+        self._message_metrics = {
+            'total_received': 0,
+            'total_sent': 0,
+            'by_type': {},
+            'errors': 0,
+            'processing_times': []
+        }
+        self._performance_monitoring_enabled = False
+        self._error_tracking_enabled = False
+        self._error_log = []
         
         # Setup default message handlers
         self._setup_default_handlers()
@@ -213,6 +237,18 @@ class ChatterServer:
             message = Message.from_json(raw_message)
             message.sender_id = connection_id
             
+            # Trace incoming message
+            self._trace_message("receive", message, connection_id)
+            
+            # Validate message against schemas
+            if not self._validate_message(message):
+                # Validation failed in lenient mode - send error but continue
+                error_msg = self.message_handler.create_error_message(
+                    "Message validation failed"
+                )
+                await self.connection_manager.send_to_connection(connection_id, error_msg)
+                return
+            
             # Apply message middleware
             for middleware in self._message_middleware:
                 message = await self._call_async_or_sync(middleware, message, connection_id)
@@ -224,9 +260,24 @@ class ChatterServer:
             if connection:
                 connection.update_last_seen()
             
-            # Process message through handler
+            # Track message received
+            self._track_message_received(message)
+            
+            # Process message through handler with timing
+            import time
+            start_time = time.time()
             context = {'connection_id': connection_id, 'connection': connection}
-            await self.message_handler.process_message(message, context)
+            
+            try:
+                await self.message_handler.process_message(message, context)
+            except Exception as e:
+                self._track_error(e, f"Processing message {message.id}")
+                raise
+            finally:
+                # Track processing time
+                if self._performance_monitoring_enabled:
+                    duration = time.time() - start_time
+                    self._track_processing_time(duration)
             
             # Route message to other clients if auto-routing is enabled
             if self.auto_route_messages:
@@ -243,6 +294,9 @@ class ChatterServer:
                 }
             )
             
+        except MessageException as e:
+            # Schema validation or other message error in strict mode
+            raise
         except Exception as e:
             raise MessageException(f"Failed to process message: {e}")
     
@@ -311,10 +365,21 @@ class ChatterServer:
     
     async def _handle_join_message(self, message: Message, context: Optional[Dict[str, Any]] = None):
         """Handle channel join messages."""
-        if not context or 'connection_id' not in context:
+        from .message_handler import MessageContext
+        
+        if not context:
             return
         
-        connection_id = context['connection_id']
+        # Handle both dict and MessageContext
+        if isinstance(context, MessageContext):
+            connection_id = context.connection_id
+        elif isinstance(context, dict):
+            connection_id = context.get('connection_id')
+        else:
+            return
+        
+        if not connection_id:
+            return
         
         # Extract channel from message content
         if isinstance(message.content, dict) and 'channel' in message.content:
@@ -336,10 +401,21 @@ class ChatterServer:
     
     async def _handle_leave_message(self, message: Message, context: Optional[Dict[str, Any]] = None):
         """Handle channel leave messages."""
-        if not context or 'connection_id' not in context:
+        from .message_handler import MessageContext
+        
+        if not context:
             return
         
-        connection_id = context['connection_id']
+        # Handle both dict and MessageContext
+        if isinstance(context, MessageContext):
+            connection_id = context.connection_id
+        elif isinstance(context, dict):
+            connection_id = context.get('connection_id')
+        else:
+            return
+        
+        if not connection_id:
+            return
         
         # Extract channel from message content
         if isinstance(message.content, dict) and 'channel' in message.content:
@@ -361,10 +437,21 @@ class ChatterServer:
     
     async def _handle_auth_message(self, message: Message, context: Optional[Dict[str, Any]] = None):
         """Handle authentication messages."""
-        if not context or 'connection_id' not in context:
+        from .message_handler import MessageContext
+        
+        if not context:
             return
         
-        connection_id = context['connection_id']
+        # Handle both dict and MessageContext
+        if isinstance(context, MessageContext):
+            connection_id = context.connection_id
+        elif isinstance(context, dict):
+            connection_id = context.get('connection_id')
+        else:
+            return
+        
+        if not connection_id:
+            return
         
         # Use custom auth handler if available
         if self._auth_handler:
@@ -415,6 +502,224 @@ class ChatterServer:
             return func(*args, **kwargs)
     
     # Public API methods
+    def enable_tracing(self, enabled: bool = True):
+        """Enable or disable detailed message tracing."""
+        self._tracing_enabled = enabled
+        if enabled:
+            self._logger.info("Message tracing enabled")
+        else:
+            self._logger.info("Message tracing disabled")
+    
+    def register_schema(self, message_pattern: str, schema: Type[BaseModel]):
+        """
+        Register a Pydantic schema for message validation.
+        
+        Args:
+            message_pattern: Pattern to match (e.g., "memory.*" or "operation:recall")
+                           Can use wildcards like * and ?
+            schema: Pydantic model to validate against
+        """
+        self._schemas[message_pattern] = schema
+        self._logger.info(f"Registered schema for pattern: {message_pattern}")
+    
+    def enable_strict_validation(self, strict: bool = True):
+        """
+        Enable or disable strict validation mode.
+        
+        In strict mode, validation failures raise exceptions.
+        In lenient mode, validation failures are logged but don't raise.
+        """
+        self._strict_validation = strict
+        if strict:
+            self._logger.info("Strict validation mode enabled")
+        else:
+            self._logger.info("Lenient validation mode enabled")
+    
+    def _validate_message(self, message: Message) -> bool:
+        """
+        Validate a message against registered schemas.
+        
+        Returns True if validation passes or no schema matches.
+        Returns False or raises exception if validation fails.
+        """
+        if message.type != MessageType.CUSTOM:
+            return True
+        
+        if not isinstance(message.content, dict):
+            return True
+        
+        # Check all schema patterns
+        for pattern, schema in self._schemas.items():
+            if self._matches_pattern(message.content, pattern):
+                try:
+                    # Validate message content against schema
+                    schema.model_validate(message.content)
+                    self._logger.debug(f"Message validated against schema: {pattern}")
+                    return True
+                except ValidationError as e:
+                    error_msg = f"Schema validation failed for pattern '{pattern}': {e}"
+                    self._logger.error(error_msg)
+                    
+                    if self._strict_validation:
+                        raise MessageException(error_msg)
+                    return False
+        
+        return True
+    
+    def _matches_pattern(self, content: Dict[str, Any], pattern: str) -> bool:
+        """
+        Check if message content matches a pattern.
+        
+        Supports wildcards and key-based matching.
+        """
+        # Simple pattern matching for now
+        # Pattern can be: "operation:*", "memory.*", etc.
+        
+        if ':' in pattern:
+            # Key:value pattern matching
+            key, value_pattern = pattern.split(':', 1)
+            if key in content:
+                content_value = str(content[key])
+                return fnmatch.fnmatch(content_value, value_pattern)
+        elif '.' in pattern:
+            # Dot notation for nested keys
+            keys = pattern.split('.')
+            current = content
+            for key in keys[:-1]:
+                if isinstance(current, dict) and key in current:
+                    current = current[key]
+                else:
+                    return False
+            # Check last key with wildcard
+            last_key = keys[-1]
+            if isinstance(current, dict):
+                return any(fnmatch.fnmatch(k, last_key) for k in current.keys())
+        else:
+            # Simple key match
+            return pattern in content
+        
+        return False
+    
+    def _trace_message(self, direction: str, message: Message, connection_id: str = None):
+        """Log message trace information if tracing is enabled."""
+        if not self._tracing_enabled:
+            return
+        
+        trace_id = message.id[:8]  # Use first 8 chars of message ID as trace ID
+        content_preview = str(message.content)[:200] if message.content else ""
+        
+        if direction == "send":
+            self._logger.debug(
+                f"[TRACE-{trace_id}] Sending {message.type} to {connection_id}"
+            )
+        elif direction == "receive":
+            self._logger.debug(
+                f"[TRACE-{trace_id}] Received {message.type} from {connection_id}"
+            )
+        
+        self._logger.debug(f"[TRACE-{trace_id}] Content: {content_preview}")
+    
+    def enable_metrics(self, enabled: bool = True):
+        """Enable or disable message metrics collection."""
+        self._metrics_enabled = enabled
+        if enabled:
+            self._logger.info("Message metrics collection enabled")
+        else:
+            self._logger.info("Message metrics collection disabled")
+    
+    def enable_performance_monitoring(self, enabled: bool = True):
+        """Enable or disable performance monitoring."""
+        self._performance_monitoring_enabled = enabled
+        if enabled:
+            self._logger.info("Performance monitoring enabled")
+        else:
+            self._logger.info("Performance monitoring disabled")
+    
+    def enable_error_tracking(self, enabled: bool = True):
+        """Enable or disable error tracking."""
+        self._error_tracking_enabled = enabled
+        if enabled:
+            self._logger.info("Error tracking enabled")
+            self._error_log = []
+        else:
+            self._logger.info("Error tracking disabled")
+    
+    def get_message_metrics(self) -> Dict[str, Any]:
+        """Get current message metrics."""
+        return self._message_metrics.copy()
+    
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """Get performance metrics."""
+        if not self._message_metrics['processing_times']:
+            return {
+                'avg_processing_time': 0,
+                'min_processing_time': 0,
+                'max_processing_time': 0,
+                'total_messages': 0
+            }
+        
+        times = self._message_metrics['processing_times']
+        return {
+            'avg_processing_time': sum(times) / len(times),
+            'min_processing_time': min(times),
+            'max_processing_time': max(times),
+            'total_messages': len(times)
+        }
+    
+    def get_error_log(self) -> list:
+        """Get error tracking log."""
+        return self._error_log.copy()
+    
+    def _track_message_received(self, message: Message):
+        """Track metrics for received message."""
+        if not self._metrics_enabled:
+            return
+        
+        self._message_metrics['total_received'] += 1
+        msg_type = str(message.type)
+        if msg_type not in self._message_metrics['by_type']:
+            self._message_metrics['by_type'][msg_type] = {'received': 0, 'sent': 0}
+        self._message_metrics['by_type'][msg_type]['received'] += 1
+    
+    def _track_message_sent(self, message: Message):
+        """Track metrics for sent message."""
+        if not self._metrics_enabled:
+            return
+        
+        self._message_metrics['total_sent'] += 1
+        msg_type = str(message.type)
+        if msg_type not in self._message_metrics['by_type']:
+            self._message_metrics['by_type'][msg_type] = {'received': 0, 'sent': 0}
+        self._message_metrics['by_type'][msg_type]['sent'] += 1
+    
+    def _track_processing_time(self, duration: float):
+        """Track message processing time."""
+        if not self._performance_monitoring_enabled:
+            return
+        
+        self._message_metrics['processing_times'].append(duration)
+        # Keep only last 1000 samples to avoid unbounded growth
+        if len(self._message_metrics['processing_times']) > 1000:
+            self._message_metrics['processing_times'] = self._message_metrics['processing_times'][-1000:]
+    
+    def _track_error(self, error: Exception, context: str = ""):
+        """Track error for error tracking."""
+        if not self._error_tracking_enabled:
+            return
+        
+        import time
+        self._message_metrics['errors'] += 1
+        error_entry = {
+            'timestamp': time.time(),
+            'error_type': type(error).__name__,
+            'error_message': str(error),
+            'context': context
+        }
+        self._error_log.append(error_entry)
+        # Keep only last 100 errors
+        if len(self._error_log) > 100:
+            self._error_log = self._error_log[-100:]
+    
     def set_auth_handler(self, auth_handler: Callable):
         """Set custom authentication handler."""
         self._auth_handler = auth_handler
@@ -438,19 +743,109 @@ class ChatterServer:
     async def broadcast_message(self, content: str, message_type: MessageType = MessageType.BROADCAST):
         """Broadcast a message to all connected clients."""
         message = self.message_handler.create_message(content, message_type)
+        self._track_message_sent(message)
         return await self.connection_manager.broadcast(message)
     
-    async def send_to_channel(self, channel: str, content: str, 
+    async def send_to_channel(self, channel: str, content: Union[str, Dict[str, Any]], 
                             message_type: MessageType = MessageType.TEXT):
         """Send a message to all clients in a channel."""
         message = self.message_handler.create_message(content, message_type)
+        self._track_message_sent(message)
         return await self.connection_manager.send_to_channel(channel, message)
     
-    async def send_to_user(self, user_id: str, content: str,
-                         message_type: MessageType = MessageType.DIRECT):
-        """Send a message to all connections of a specific user."""
-        message = self.message_handler.create_message(content, message_type)
+    async def send_to_user(
+        self,
+        user_id: str,
+        content: Union[str, Dict[str, Any]],
+        message_type: MessageType = MessageType.DIRECT,
+        routing: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Send a message to all connections of a specific user.
+        
+        Automatically serializes content based on message type:
+        - CUSTOM messages: dict -> JSON string for transport
+        - TEXT messages: must be string
+        - Other types: flexible
+        
+        Args:
+            user_id: Target user ID
+            content: Message content (str or dict)
+            message_type: Type of message
+            routing: Optional routing metadata (sender, recipient, etc.)
+        """
+        # Validate content type based on message type
+        if message_type == MessageType.CUSTOM:
+            if isinstance(content, dict):
+                # Valid - will be serialized for transport
+                pass
+            elif isinstance(content, str):
+                # Validate it's valid JSON
+                try:
+                    json.loads(content)
+                except json.JSONDecodeError:
+                    raise ValueError("CUSTOM message must be dict or valid JSON string")
+            else:
+                raise ValueError(f"CUSTOM message must be dict or JSON string, got {type(content)}")
+        elif message_type == MessageType.TEXT:
+            if not isinstance(content, str):
+                raise ValueError(f"TEXT message must be string, got {type(content)}")
+        
+        # Create message
+        message = self.message_handler.create_message(
+            content, 
+            message_type,
+            metadata=routing or {}
+        )
+        
+        # Trace outgoing message
+        self._trace_message("send", message, user_id)
+        
         return await self.connection_manager.send_to_user(user_id, message)
+    
+    async def route_message(
+        self,
+        content: Union[str, Dict[str, Any]],
+        sender: str,
+        recipient: str,
+        message_type: MessageType = MessageType.CUSTOM,
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Route a message to the specified recipient with routing metadata.
+        
+        Args:
+            content: Message content
+            sender: Sender ID/alias
+            recipient: Recipient ID/alias
+            message_type: Type of message
+            metadata: Additional routing metadata
+        """
+        from .message_handler import RoutedMessage
+        
+        # Create routed message
+        routed_msg = RoutedMessage(
+            content=content,
+            sender=sender,
+            recipient=recipient,
+            metadata=metadata or {}
+        )
+        
+        # Prepare routing envelope
+        envelope = {
+            'sender': routed_msg.sender,
+            'recipient': routed_msg.recipient,
+            'timestamp': routed_msg.timestamp,
+            'metadata': routed_msg.metadata
+        }
+        
+        # Send to recipient with routing context
+        await self.send_to_user(
+            recipient,
+            routed_msg.content,
+            message_type,
+            routing=envelope
+        )
     
     def get_stats(self) -> Dict[str, Any]:
         """Get server statistics."""

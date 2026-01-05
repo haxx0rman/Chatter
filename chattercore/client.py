@@ -13,7 +13,7 @@ from websockets import ConnectionClosed
 
 from .event_manager import EventManager, EventType
 from .message_handler import MessageHandler, Message, MessageType
-from .exceptions import ClientException, ConnectionException
+from .exceptions import ClientException, ConnectionException, TimeoutException
 
 
 class ClientState(str, Enum):
@@ -312,6 +312,51 @@ class ChatterClient:
             self._logger.error(f"Authentication error: {e}")
             return False
     
+    async def send_request(
+        self,
+        recipient: str,
+        content: Dict[str, Any],
+        timeout: float = 30.0
+    ) -> Dict[str, Any]:
+        """
+        Send a request and wait for response.
+        
+        Automatically generates request_id and manages future.
+        Returns response content or raises TimeoutError.
+        
+        Args:
+            recipient: Recipient ID or alias
+            content: Request content (dict)
+            timeout: Response timeout in seconds
+            
+        Returns:
+            Response content dict
+            
+        Raises:
+            TimeoutError: If no response within timeout
+            ClientException: If send fails or not connected
+        """
+        if not self.is_connected:
+            raise ClientException("Not connected to server")
+        
+        # Use message handler's send_request with a callback to send the message
+        async def send_callback(msg_content, msg_type, recipient_id):
+            await self.send_message(
+                content=msg_content,
+                message_type=msg_type,
+                recipient_id=recipient_id
+            )
+        
+        response = await self.message_handler.send_request(
+            content=content,
+            recipient=recipient,
+            sender_id=self._user_id or self._websocket.id if hasattr(self._websocket, 'id') else 'unknown',
+            timeout=timeout,
+            send_callback=send_callback
+        )
+        
+        return response
+    
     async def join_channel(self, channel: str) -> bool:
         """Join a channel."""
         try:
@@ -508,6 +553,130 @@ class ChatterClient:
         self._reconnect_task = None
     
     # Public API methods
+    async def send_request(
+        self,
+        recipient: str,
+        content: Dict[str, Any],
+        timeout: float = 30.0
+    ) -> Dict[str, Any]:
+        """
+        Send a request and wait for response.
+        
+        Automatically generates request_id and manages future.
+        Returns response content or raises TimeoutError.
+        
+        Args:
+            recipient: Recipient ID or alias
+            content: Request content (must be dict)
+            timeout: Response timeout in seconds
+            
+        Returns:
+            Response content dict
+            
+        Raises:
+            ClientException: If not connected or send fails
+            TimeoutException: If no response within timeout
+        """
+        if not self.is_connected:
+            raise ClientException("Not connected to server")
+        
+        if not isinstance(content, dict):
+            raise ClientException("Request content must be a dict")
+        
+        # Use message handler's send_request with our send callback
+        async def send_callback(content_dict, msg_type, recipient_id):
+            await self.send_message(
+                content=content_dict,
+                message_type=msg_type,
+                recipient_id=recipient_id
+            )
+        
+        try:
+            response = await self.message_handler.send_request(
+                content=content,
+                recipient=recipient,
+                sender_id=self._user_id or "anonymous",
+                timeout=timeout,
+                send_callback=send_callback
+            )
+            return response
+        except asyncio.TimeoutError as e:
+            raise TimeoutException(str(e))
+        except Exception as e:
+            raise ClientException(f"Failed to send request: {e}")
+    
+    async def send_response(self, request_id: str, content: Dict[str, Any]):
+        """
+        Send response to a previous request.
+        
+        Automatically routes to original requester.
+        
+        Args:
+            request_id: Original request ID
+            content: Response content (must be dict with request_id)
+        """
+        if not self.is_connected:
+            raise ClientException("Not connected to server")
+        
+        # Ensure request_id is in content
+        content['request_id'] = request_id
+        
+        # Send as CUSTOM message
+        await self.send_message(
+            content=content,
+            message_type=MessageType.CUSTOM
+        )
+    
+    async def route_message(
+        self,
+        recipient: str,
+        content: Union[str, Dict[str, Any]],
+        message_type: MessageType = MessageType.CUSTOM,
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        """
+        Send a routed message to a specific recipient.
+        
+        Args:
+            recipient: Recipient ID or alias
+            content: Message content
+            message_type: Type of message
+            metadata: Additional routing metadata
+        """
+        from .message_handler import RoutedMessage
+        
+        # Create routed message
+        routed_msg = RoutedMessage(
+            content=content,
+            sender=self._user_id or "anonymous",
+            recipient=recipient,
+            metadata=metadata or {}
+        )
+        
+        # For CUSTOM messages, embed routing info in the content if it's a dict
+        if message_type == MessageType.CUSTOM and isinstance(content, dict):
+            # Add routing metadata to content
+            enriched_content = content.copy()
+            enriched_content['_routing'] = {
+                'sender': routed_msg.sender,
+                'recipient': routed_msg.recipient,
+                'timestamp': routed_msg.timestamp,
+                'metadata': routed_msg.metadata
+            }
+            
+            await self.send_message(
+                content=enriched_content,
+                message_type=message_type,
+                recipient_id=recipient
+            )
+        else:
+            # For non-dict content, just send normally
+            await self.send_message(
+                content=routed_msg.content,
+                message_type=message_type,
+                recipient_id=recipient
+            )
+    
     def register_message_handler(self, message_type: MessageType, handler: Callable):
         """Register a custom message handler."""
         self.message_handler.register_handler(message_type, handler)

@@ -75,33 +75,57 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## Callback System
+## Request-Response with Callback IDs
 
-ChatterCore supports two routes for handling message responses:
+ChatterCore has **native callback ID support** for request-response messaging patterns. Messages automatically include a `reply_to` field that links responses to their original requests.
 
-1. **Synchronous Waiting**: Wait for response and get it returned
-2. **Asynchronous Callbacks**: Register function called when response arrives
+### Two Routes for Handling Responses:
+
+#### 1. Synchronous Waiting (wait_for_response=True)
+Block until response is received - perfect for simple request-response flows:
 
 ```python
-# Route 1: Synchronous waiting
 response = await client.send_message(
-    "Request data",
+    "What is 2 + 2?",
     wait_for_response=True,
     timeout=10
 )
+print(f"Answer: {response.content}")
+# response.reply_to automatically contains the original message ID
+```
 
-# Route 2: Asynchronous callback
+#### 2. Asynchronous Callbacks (callback=function)
+Non-blocking - continue other work while waiting for response:
+
+```python
 async def response_handler(message):
     print(f"Got response: {message.content}")
+    print(f"Reply to message: {message.reply_to}")
 
 await client.send_message(
-    "Background request",
+    "Process this in background",
     callback=response_handler,
     timeout=10
 )
+# Continue immediately with other work
 ```
 
-See `docs/callback_system.md` for detailed documentation.
+### Server-Side Response
+
+The server automatically creates responses linked to requests:
+
+```python
+async def request_handler(message, context):
+    # Create response with reply_to field
+    response = server.message_handler.create_message(
+        content="Processed!",
+        reply_to=message.id  # ← Callback ID linking response to request
+    )
+    # Send response - client automatically matches by callback ID
+    await send_to_client(response)
+```
+
+**The callback ID system is built-in** - no external tracking needed! See [docs/REQUEST_RESPONSE_PATTERN.md](docs/REQUEST_RESPONSE_PATTERN.md) for complete documentation.
 
 ## Architecture
 
