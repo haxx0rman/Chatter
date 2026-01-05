@@ -363,12 +363,12 @@ class ChatterClient:
         try:
             message = Message.from_json(raw_message)
             
-            # Check for pending response
-            if message.reply_to and message.reply_to in self._pending_messages:
-                future = self._pending_messages.pop(message.reply_to)
-                if not future.done():
-                    future.set_result(message)
-                return
+            # Check for callback/response handlers first
+            if message.reply_to:
+                # Try the callback handler (for both wait_for_response and callback)
+                if await self.message_handler.callback_handler.handle_response(message):
+                    # Message was handled by callback system
+                    return
             
             # Process through message handler
             await self.message_handler.process_message(message, {'client': self})

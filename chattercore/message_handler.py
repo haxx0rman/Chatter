@@ -222,7 +222,13 @@ class CallbackHandler:
             callback = self._response_callbacks.pop(reply_to)
             try:
                 if asyncio.iscoroutinefunction(callback):
-                    asyncio.create_task(callback(message))
+                    # Wrap async callback in error-handling task
+                    async def safe_callback():
+                        try:
+                            await callback(message)
+                        except Exception as e:
+                            print(f"Error in response callback for {reply_to}: {e}")
+                    asyncio.create_task(safe_callback())
                 else:
                     callback(message)
                 handled = True
