@@ -32,7 +32,8 @@ class ChatterServer:
         message_size_limit: int = 1024 * 1024,  # 1MB
         ping_interval: int = 20,
         ping_timeout: int = 20,
-        close_timeout: int = 10
+        close_timeout: int = 10,
+        auto_route_messages: bool = True
     ):
         self.host = host
         self.port = port
@@ -41,6 +42,7 @@ class ChatterServer:
         self.ping_interval = ping_interval
         self.ping_timeout = ping_timeout
         self.close_timeout = close_timeout
+        self.auto_route_messages = auto_route_messages
         
         # Core components
         self.event_manager = EventManager()
@@ -226,6 +228,10 @@ class ChatterServer:
             context = {'connection_id': connection_id, 'connection': connection}
             await self.message_handler.process_message(message, context)
             
+            # Route message to other clients if auto-routing is enabled
+            if self.auto_route_messages:
+                await self._route_message(message, connection_id)
+            
             # Emit message received event
             await self.event_manager.publish(
                 EventType.MESSAGE_RECEIVED,
@@ -239,6 +245,51 @@ class ChatterServer:
             
         except Exception as e:
             raise MessageException(f"Failed to process message: {e}")
+    
+    async def _route_message(self, message: Message, sender_id: str):
+        """
+        Route message to appropriate recipients based on message properties.
+        
+        This method implements smart routing logic:
+        - Direct messages: send to specific recipient
+        - Channel messages: send to all in channel (excluding sender)
+        - Broadcast messages: send to all connections (excluding sender)
+        - Custom/Text messages: broadcast to all (excluding sender) by default
+        """
+        try:
+            # Direct message - send to specific recipient
+            if message.recipient_id:
+                self._logger.debug(f"Routing direct message from {sender_id} to {message.recipient_id}")
+                await self.connection_manager.send_to_connection(message.recipient_id, message)
+                return
+            
+            # Channel message - send to all in channel (excluding sender)
+            if message.channel:
+                self._logger.debug(f"Routing channel message from {sender_id} to channel {message.channel}")
+                await self.connection_manager.send_to_channel(
+                    message.channel, message, exclude_connection=sender_id
+                )
+                return
+            
+            # Broadcast message - send to all (excluding sender)
+            if message.type == MessageType.BROADCAST:
+                self._logger.debug(f"Broadcasting message from {sender_id} to all clients")
+                await self.connection_manager.broadcast(message, exclude_connection=sender_id)
+                return
+            
+            # Custom and Text messages - broadcast by default (excluding sender)
+            # These are the most common user messages
+            if message.type in [MessageType.CUSTOM, MessageType.TEXT]:
+                self._logger.debug(f"Routing {message.type} message from {sender_id} to all clients")
+                await self.connection_manager.broadcast(message, exclude_connection=sender_id)
+                return
+            
+            # System, Error, Status, Heartbeat, Auth messages are NOT auto-routed
+            # These are typically server-to-client only
+            self._logger.debug(f"Message type {message.type} not auto-routed")
+            
+        except Exception as e:
+            self._logger.error(f"Failed to route message: {e}")
     
     async def _handle_system_message(self, message: Message, context: Optional[Dict[str, Any]] = None):
         """Handle system messages."""
