@@ -352,16 +352,31 @@ class ChatterServer:
     
     async def _handle_heartbeat(self, message: Message, context: Optional[Dict[str, Any]] = None):
         """Handle heartbeat messages."""
-        if context and 'connection_id' in context:
-            # Send heartbeat response
-            response = self.message_handler.create_message(
-                content="pong",
-                message_type=MessageType.HEARTBEAT
-            )
-            await self.connection_manager.send_to_connection(
-                context['connection_id'], 
-                response
-            )
+        from .message_handler import MessageContext
+        
+        if not context:
+            return
+        
+        # Handle both dict and MessageContext
+        if isinstance(context, MessageContext):
+            connection_id = context.connection_id
+        elif isinstance(context, dict):
+            connection_id = context.get('connection_id')
+        else:
+            return
+        
+        if not connection_id:
+            return
+        
+        # Send heartbeat response
+        response = self.message_handler.create_message(
+            content="pong",
+            message_type=MessageType.HEARTBEAT
+        )
+        await self.connection_manager.send_to_connection(
+            connection_id, 
+            response
+        )
     
     async def _handle_join_message(self, message: Message, context: Optional[Dict[str, Any]] = None):
         """Handle channel join messages."""
