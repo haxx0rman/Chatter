@@ -10,8 +10,8 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="chattercore",
     version="2.0.0",
-    author="Michael Diaz",
-    author_email="michael@diaz.dev",
+    author="Michael",
+    author_email="",
     description="A self-contained, general-purpose real-time communication module",
     long_description=long_description,
     long_description_content_type="text/markdown",

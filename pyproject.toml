@@ -9,7 +9,7 @@ description = "A self-contained, general-purpose real-time communication module"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Michael Diaz", email = "michael@diaz.dev"},
+    {name = "Michael"},
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
