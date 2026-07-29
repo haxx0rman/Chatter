@@ -9,13 +9,13 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="chattercore",
-    version="1.0.0",
-    author="ChatterCore Developer",
-    author_email="developer@chattercore.com",
+    version="2.0.0",
+    author="Michael Diaz",
+    author_email="michael@diaz.dev",
     description="A self-contained, general-purpose real-time communication module",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/chattercore",
+    url="https://github.com/haxx0rman/Chatter",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -34,10 +34,8 @@ setup(
     python_requires=">=3.8",
     install_requires=[
         "websockets>=11.0.0",
-        "asyncio",
-        "json-rpc",
         "pydantic>=2.0.0",
-        "typing-extensions",
+        "typing-extensions>=4.0.0",
     ],
     extras_require={
         "dev": [

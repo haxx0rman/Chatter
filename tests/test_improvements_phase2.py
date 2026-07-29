@@ -391,15 +391,15 @@ class TestRoutingWithContext:
         context.sender = "CLIENT_A"
         context.recipient = "SERVICE_B"
         
-        # Gateway routes to hub
-        context.add_hop("HUB")
+        # Gateway routes to service
+        context.add_hop("ROUTER")
         
-        # Hub routes to service
+        # Router routes to service
         context.add_hop("SERVICE_B")
         
         # Verify full routing path
         assert len(context.route_hops) == 3
-        assert context.route_hops == ["GATEWAY", "HUB", "SERVICE_B"]
+        assert context.route_hops == ["GATEWAY", "ROUTER", "SERVICE_B"]
         assert context.sender == "CLIENT_A"
         assert context.recipient == "SERVICE_B"
         assert context.is_routed()

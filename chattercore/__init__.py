@@ -26,8 +26,8 @@ from .exceptions import (
 )
 
 __version__ = "2.0.0"
-__author__ = "ChatterCore Developer"
-__email__ = "developer@chattercore.com"
+__author__ = "Michael Diaz"
+__email__ = "michael@diaz.dev"
 
 __all__ = [
     "ChatterServer",

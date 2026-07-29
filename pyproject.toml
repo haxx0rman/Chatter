@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chattercore"
-version = "1.0.0"
+version = "2.0.0"
 description = "A self-contained, general-purpose real-time communication module"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "ChatterCore Developer", email = "developer@chattercore.com"}
+    {name = "Michael Diaz", email = "michael@diaz.dev"},
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -48,9 +48,9 @@ chattercore-server = "chattercore.server:main"
 chattercore-client = "chattercore.client:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/chattercore"
-Repository = "https://github.com/yourusername/chattercore.git"
-Issues = "https://github.com/yourusername/chattercore/issues"
+Homepage = "https://github.com/haxx0rman/Chatter"
+Repository = "https://github.com/haxx0rman/Chatter"
+Issues = "https://github.com/haxx0rman/Chatter/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["chattercore"]

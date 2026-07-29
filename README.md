@@ -143,8 +143,8 @@ This project uses [uv](https://github.com/astral-sh/uv) for fast, reliable depen
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/chattercore.git
-cd chattercore
+git clone https://github.com/haxx0rman/Chatter.git
+cd Chatter
 
 # Install dependencies using uv
 uv sync

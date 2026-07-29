@@ -93,7 +93,7 @@ All improvements from the CHATTERCORE_IMPROVEMENTS.md report have been successfu
 
 **Benefits**:
 - ✅ Standardized routing pattern
-- ✅ Eliminates custom Hub routing code
+- ✅ Eliminates custom router logic
 - ✅ Routing metadata automatically available
 - ✅ Clear sender/recipient tracking
 
@@ -333,7 +333,7 @@ response = await asyncio.wait_for(future, timeout=60.0)
 
 # After (built-in request-response)
 response = await client.send_request(
-    recipient="HINDSIGHT",
+    recipient="service_b",
     content={"operation": "recall", "query": "test"},
     timeout=60.0
 )

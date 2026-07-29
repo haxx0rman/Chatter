@@ -100,7 +100,7 @@ async def demo_routed_message():
     routed = RoutedMessage(
         content={"operation": "recall", "query": "test"},
         sender="AGENT_A",
-        recipient="HINDSIGHT",
+        recipient="server",
         metadata={"priority": "high", "timeout": 30}
     )
     

@@ -6,16 +6,16 @@
 
 ## Executive Summary
 
-During troubleshooting of a message routing timeout between Hindsight and Companion agents, we discovered a fundamental ambiguity in ChatterCore's message content handling. The issue stems from inconsistent JSON serialization behavior that forces application-layer code to implement complex parsing and unwrapping logic.
+During troubleshooting of a message routing timeout between two microservices, we discovered a fundamental ambiguity in ChatterCore's message content handling. The issue stems from inconsistent JSON serialization behavior that forces application-layer code to implement complex parsing and unwrapping logic.
 
 ## Issue Analysis
 
 ### The Problem
 
-**Symptom**: Companion agent never received memory responses from Hindsight despite Hub successfully routing messages.
+**Symptom**: One service never received responses from another despite a central router successfully forwarding messages.
 
 **Root Cause**: Message content serialization ambiguity
-- Hub sends routed messages as Python dicts to ChatterCore
+- The router sends routed messages as Python dicts to ChatterCore
 - ChatterCore serializes these to JSON strings for transport
 - Recipients receive `message.content` as a string, not a dict
 - Application code must handle both dict and string cases
@@ -116,7 +116,7 @@ class ChatterClient:
 
 ### 2. **Built-in Message Routing** (Priority: HIGH)
 
-**Problem**: Routing logic duplicated across Hub and application code
+**Problem**: Routing logic duplicated across a central router and application code
 
 **Recommendation**: Add native routing support to ChatterCore
 
@@ -179,7 +179,7 @@ class ChatterClient:
 ```
 
 **Benefits**:
-- ✅ Eliminates custom Hub routing code
+- ✅ Eliminates custom router logic
 - ✅ Routing metadata automatically available to handlers
 - ✅ Standardized routing pattern across all applications
 - ✅ Built-in load balancing for multi-instance recipients
@@ -340,7 +340,7 @@ class ChatterClient:
 **Application usage** (simplified):
 ```python
 # Before (manual future management)
-request_id = f"Companion_recall_{int(time.time() * 1000)}"
+request_id = f"service_a_operation_{int(time.time() * 1000)}"
 future = asyncio.Future()
 self.pending_memory_requests[request_id] = future
 await self.send_message(json.dumps(request), MessageType.CUSTOM)
@@ -348,7 +348,7 @@ response = await asyncio.wait_for(future, timeout=60.0)
 
 # After (built-in request-response)
 response = await self.client.send_request(
-    recipient="HINDSIGHT",
+    recipient="service_b",
     content={"operation": "recall", "query": "test"},
     timeout=60.0
 )
@@ -398,7 +398,7 @@ class ChatterServer:
 2. **Request-Response Pattern** - Simplifies 90% of agent code
 
 ### Phase 2: Enhanced Routing (Week 2)
-3. **Built-in Message Routing** - Removes custom Hub logic
+- 3. **Built-in Message Routing** - Removes custom router logic
 4. **Context Enhancement** - Better handler information
 
 ### Phase 3: Quality of Life (Week 3)
@@ -429,15 +429,15 @@ server.enable_feature("auto_parse_custom", default=False)
 1. Release ChatterCore 2.0 with new features
 2. Maintain 1.x branch for 6 months
 3. Provide migration guide and compatibility helpers
-4. Update all Hive agents to use 2.0
+4. Update all microservices to use 2.0
 
 ---
 
 ## Code Examples
 
-### Before (Current Hive Code)
+### Before (Microservice Code)
 ```python
-# In base.py - Complex dispatcher with manual parsing
+# In a complex service - Manual dispatcher with unwrapping logic
 async def dispatcher(message, context):
     content = message.content
     if isinstance(content, str):
@@ -451,7 +451,7 @@ async def dispatcher(message, context):
         sender = content.get('sender')
         # ... more unwrapping logic
 
-# In Companion.py - Manual future management
+# In another service - Manual future management
 request_id = f"{self.alias}_{operation}_{int(time.time() * 1000)}"
 future = asyncio.Future()
 self.pending_memory_requests[request_id] = future
@@ -459,17 +459,17 @@ await self.send_message(json.dumps(request), MessageType.CUSTOM)
 response = await asyncio.wait_for(future, timeout=60.0)
 ```
 
-### After (With ChatterCore Improvements)
+### After (With ChatterCore)
 ```python
-# In base.py - Simple dispatcher
+# In a simple service - No dispatcher needed
 async def dispatcher(message, context):
     # message.content is always a dict for CUSTOM messages
     for handler in self._message_handlers[message_type]:
         await handler(message, context)
 
-# In Companion.py - Built-in request-response
+# In another service - Built-in request-response
 response = await self.send_request(
-    "HINDSIGHT",
+    {"service_b"},
     {"operation": "recall", "query": query, "agent_id": self.alias},
     timeout=60.0
 )
@@ -524,7 +524,7 @@ async def test_request_response_pattern():
 ## Performance Considerations
 
 ### Current Issues
-- JSON parsing done multiple times (Hub, dispatcher, handler)
+- JSON parsing done multiple times (router, dispatcher, handler)
 - String allocations for serialization/deserialization
 - Manual future management overhead
 
